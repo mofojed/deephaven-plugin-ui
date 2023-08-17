@@ -7,29 +7,30 @@ import json
 import io
 from .component import *
 
-NAME = "deephaven.ui.Panel"
-TEXT_INPUT_NAME = "deephaven.ui.TextInput"
+NAME_COMPONENT_NODE = "deephaven.ui.ComponentNode"
+NAME_TEXT_INPUT = "deephaven.ui.TextInput"
 
 __version__ = '0.0.1.dev0'
 
 
-class DeephavenUiPanel:
-    def __init__(self, content):
-        self._content = content
-
-
-class DeephavenUiMessageStream(MessageStream):
-    def __init__(self, panel: DeephavenUiPanel, connection: MessageStream):
-        self._panel = panel
+class ComponentNodeMessageStream(MessageStream):
+    def __init__(self, node: ComponentNode, connection: MessageStream):
+        self._node = node
         self._connection = connection
 
     def start(self) -> None:
-        result = self._component()
+        context = RenderContext()
+
+        def handle_change():
+            result = self._node(context)
+            self.send_result(result)
+
+        context.on_change = handle_change
+        result = self._node(context)
         self.send_result(result)
-        add_component_listener(self.on_component_updated)
 
     def send_result(self, result) -> None:
-        payload = json.dumps({ 'result': result }).encode()
+        payload = json.dumps({'result': result}).encode()
         self._connection.on_data(payload, self.objects)
 
     def on_close(self) -> None:
@@ -38,23 +39,20 @@ class DeephavenUiMessageStream(MessageStream):
     def on_data(self, payload: bytes, references: List[Any]) -> None:
         print(f"Data received: {payload}")
 
-    def on_component_updated(self, component, result):
-        if component == self._panel._component:
-            self.send_result(result)
 
-class DeephavenUiPanelType(BidirectionalObjectType):
+class ComponentNodeType(BidirectionalObjectType):
     @property
     def name(self) -> str:
-        return NAME
+        return NAME_COMPONENT_NODE
 
     def is_type(self, obj: any) -> bool:
-        return isinstance(obj, DeephavenUiPanel)
+        return isinstance(obj, ComponentNode)
 
     # def to_bytes(self, exporter: Exporter, panel: DeephavenUiPanel) -> bytes:
     #     return export_figure(exporter, figure)
 
-    def create_client_connection(self, obj: object, connection: MessageStream):
-        client_connection = DeephavenUiMessageStream(obj, connection)
+    def create_client_connection(self, obj: ComponentNode, connection: MessageStream):
+        client_connection = ComponentNodeMessageStream(obj, connection)
         client_connection.start()
         return client_connection
 
@@ -94,7 +92,7 @@ class TextInputMessageStream(MessageStream):
 class TextInputType(BidirectionalObjectType):
     @property
     def name(self) -> str:
-        return TEXT_INPUT_NAME
+        return NAME_TEXT_INPUT
 
     def is_type(self, obj: any) -> bool:
         return isinstance(obj, TextInput)
@@ -104,8 +102,9 @@ class TextInputType(BidirectionalObjectType):
         connection.on_data(obj.value.encode(), [])
         return client_connection
 
+
 class UIRegistration(Registration):
     @classmethod
     def register_into(cls, callback: Callback) -> None:
-        callback.register(DeephavenUiPanelType)
+        callback.register(ComponentNodeType)
         callback.register(TextInputType)

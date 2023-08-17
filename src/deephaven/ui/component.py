@@ -1,102 +1,185 @@
 # Prototype for programmatic layouts/callbacks
 # Uses a React-like syntax, with hooks
-_deephaven_current_context = {}
-_deephaven_component_listeners = []
-
-# Convenience function for debugging
-def _reset_state():
-    global _deephaven_current_context
-    _deephaven_current_context = {}
+import functools
+from typing import Optional
 
 
-def _notify_listener_updated(component, result):
-    for listener in _deephaven_component_listeners:
-        listener(component, result)
+class RenderContext:
+    """
+    Context for rendering a component.
+    """
+    def __init__(self):
+        self._hook_index = -1
+        self._state = {}
+        self._children_context = {}
+        self._on_change = lambda: None
+
+    def _notify_change(self):
+        """
+        Notify the parent context that this context has changed.
+        Note that we're just re-rendering the whole tree on change.
+        TODO: We should be able to do better than this, and only re-render the parts that have actually changed.
+        """
+        self._on_change()
+
+    def set_on_change(self, on_change):
+        """
+        Set the on_change callback.
+        """
+        self._on_change = on_change
+
+    def get_state(self, key, default=None):
+        """
+        Get the state for the given key.
+        """
+        if key not in self._state:
+            self._state[key] = default
+        return self._state[key]
+
+    def set_state(self, key, value):
+        """
+        Set the state for the given key.
+        """
+        self._state[key] = value
+        self._notify_change()
+
+    def get_child_context(self, key):
+        """
+        Get the child context for the given key.
+        """
+        if key not in self._children_context:
+            child_context = RenderContext()
+            child_context.set_on_change(self._notify_change)
+            self._children_context[key] = child_context
+        return self._children_context[key]
+
+    def start_render(self):
+        """
+        Start rendering this component.
+        """
+        self._hook_index = -1
+
+    def finish_render(self):
+        """
+        Finish rendering this component.
+        """
+        # TODO: Should verify that the correct number of hooks were called, state is correct etc
+        pass
+
+    def next_hook_index(self):
+        """
+        Increment the hook index.
+        """
+        self._hook_index += 1
+        return self._hook_index
 
 
-def add_component_listener(listener):
-    _deephaven_component_listeners.append(listener)
+class UiSharedInternals:
+    _current_context: Optional[RenderContext] = None
 
-CHILD_INDEX_KEY = "_child_index"
-CHILD_CONTEXT_KEY = "_child_context"
-HOOK_INDEX_KEY = "_hook_index"
-RERENDER_KEY = "_rerender"
-STATE_KEY = "_state"
+    @property
+    def current_context(self) -> RenderContext:
+        if self._current_context is None:
+            raise Exception("No current context set. This should only be called when rendering a component.")
+        return self._current_context
+
+
+_deephaven_ui_shared_internals: UiSharedInternals = UiSharedInternals()
+
+
+def _get_context() -> RenderContext:
+    return _deephaven_ui_shared_internals.current_context
+
+
+def _set_context(context):
+    _deephaven_ui_shared_internals._current_context = context
+
+
+class ComponentNode:
+    def __init__(self, component_type, render):
+        """
+        Create a component node.
+        :param component_type: Type of the component. Typically, the module joined with the name of the function.
+        :param render: The render function to call when the component needs to be rendered.
+        """
+        self._type = component_type
+        self._render = render
+
+    def __call__(self, context: RenderContext, render_deep=True):
+        """
+        Render the component.
+        :param context: The context to render the component in.
+        :param render_deep: Whether to render the component's children.
+        :return: The rendered component.
+        """
+        def render_child(child, child_context):
+            if isinstance(child, ComponentNode):
+                return child(child_context, render_deep)
+            else:
+                return child
+
+        result = self._render(context)
+        if render_deep:
+            # Array of children returned, render them all
+            if isinstance(result, list):
+                result = [render_child(child, context.get_child_context(i)) for i, child in enumerate(result)]
+            else:
+                result = render_child(result, context.get_child_context(0))
+        return result
+
+    @property
+    def type(self):
+        return self._type
+
+
+def _get_component_type(func):
+    """
+    Get the type of the component from the passed in function.
+    """
+    return func.__module__ + "." + func.__qualname__
+
 
 def component(func):
     """
-    Render a component. Re-run when kwargs or state changes.
+    Create a ComponentNode from the passed in function.
     """
 
-    def render(**kwargs):
-        # Set the context for this components render cycle
-        # Necessary for hooks to work
-        global _deephaven_current_context
-        parent_context = _deephaven_current_context
+    @functools.wraps(func)
+    def make_component_node(*args, **kwargs):
+        component_type = _get_component_type(func)
 
-        # We're just using a sequential key, when this should probably be randomly generated UUID or something
-        child_index = parent_context.get(CHILD_INDEX_KEY, -1) + 1
+        def render(context: RenderContext):
+            """
+            Render the component. Should only be called when actually rendering the component, e.g. exporting it to the client.
+            :param context: Context to render the component in
+            :return: The rendered component.
+            """
+            old_context = _get_context()
 
-        # Get the child contexts from the parent
-        parent_context[CHILD_INDEX_KEY] = child_index
-        child_contexts = parent_context.get(CHILD_CONTEXT_KEY, {})
+            _set_context(context)
+            context.start_render()
 
-        # Grab this renders context
-        current_context = child_contexts.get(child_index, {})
-        child_contexts[child_index] = current_context
-        parent_context[CHILD_CONTEXT_KEY] = child_contexts
+            result = func(*args, **kwargs)
 
-        # print("render 10 current_context is" + str(current_context))
-        def rerender():
-            global _deephaven_current_context
-            current_context.pop(HOOK_INDEX_KEY, None)
-            current_context.pop(CHILD_INDEX_KEY, None)
-            _deephaven_current_context = current_context
-
-            # TODO: Need the return value from the render function
-            # Also need to listen for when the child rerenders?
-            result = func(**kwargs)
-
-            child_contexts[child_index] = current_context
-            _deephaven_current_context = parent_context
-
+            context.finish_render()
+            _set_context(old_context)
             return result
 
-        # For now just re-render the whole tree when any state changes
-        if RERENDER_KEY not in parent_context:
-            def toplevel_rerender():
-                result = rerender()
-                _notify_listener_updated(render, result)
+        return ComponentNode(component_type, render)
 
-            parent_context[RERENDER_KEY] = toplevel_rerender
-
-        current_context[RERENDER_KEY] = parent_context.get(RERENDER_KEY)
-
-        return rerender()
-
-    return render
+    return make_component_node
 
 
 def use_state(initial_value):
     # print("use_state 10 current_context is" + str(_deephaven_current_context))
     # Just using a sequential index for hooks, this should be valid
-    hook_index = _deephaven_current_context.get(HOOK_INDEX_KEY, -1) + 1
-    _deephaven_current_context[HOOK_INDEX_KEY] = hook_index
+    context = _get_context()
+    hook_index = context.next_hook_index()
 
-    # Grab the state from the context
-    state = _deephaven_current_context.get(STATE_KEY, {})
-    _deephaven_current_context[STATE_KEY] = state
-
-    # Grab the value from the state, re-assign it if necessary
-    value = state.get(hook_index, initial_value)
-    state[hook_index] = value
-
-    # Grab the rerender function so we can rerender the component when value is set
-    rerender = _deephaven_current_context.get(RERENDER_KEY)
+    value = context.get_state(hook_index, initial_value)
 
     def set_value(new_value):
-        # Set the value in the state and trigger a rerender
-        state[hook_index] = new_value
-        rerender()
+        # Set the value in the context state and trigger a rerender
+        context.set_state(hook_index, new_value)
 
     return value, set_value
