@@ -12,9 +12,11 @@ TEXT_INPUT_NAME = "deephaven.ui.TextInput"
 
 __version__ = '0.0.1.dev0'
 
+
 class DeephavenUiPanel:
-    def __init__(self, component):
-        self._component = component
+    def __init__(self, content):
+        self._content = content
+
 
 class DeephavenUiMessageStream(MessageStream):
     def __init__(self, panel: DeephavenUiPanel, connection: MessageStream):
@@ -56,11 +58,25 @@ class DeephavenUiPanelType(BidirectionalObjectType):
         client_connection.start()
         return client_connection
 
+
 class TextInput:
     def __init__(self, initial_value, on_change):
-        self._component = component
         self._value = initial_value
         self._on_change = on_change
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        self._value = new_value
+        self._on_change(new_value)
+
+
+def text_input(initial_value, on_change):
+    return TextInput(initial_value, on_change)
+
 
 class TextInputMessageStream(MessageStream):
     def __init__(self, text_input: TextInput, connection: MessageStream):
@@ -71,10 +87,9 @@ class TextInputMessageStream(MessageStream):
         pass
 
     def on_data(self, payload: bytes, references: List[Any]) -> None:
-        print(f"TextInput Data received: {payload}, {type(payload)}, {str(payload)}")
-        print(f"Bytes decoded: {io.BytesIO(payload).read().decode()}")
-        # print(f"Bytes: {payload[0]}")
-        # self._text_input._on_change(payload.decode())
+        decoded_payload = io.BytesIO(payload).read().decode()
+        self._text_input.value = decoded_payload
+
 
 class TextInputType(BidirectionalObjectType):
     @property
@@ -84,12 +99,9 @@ class TextInputType(BidirectionalObjectType):
     def is_type(self, obj: any) -> bool:
         return isinstance(obj, TextInput)
 
-    # def to_bytes(self, exporter: Exporter, panel: DeephavenUiPanel) -> bytes:
-    #     return export_figure(exporter, figure)
-
-    def create_client_connection(self, obj: object, connection: MessageStream):
+    def create_client_connection(self, obj: TextInput, connection: MessageStream):
         client_connection = TextInputMessageStream(obj, connection)
-        connection.on_data("".encode(), [])
+        connection.on_data(obj.value.encode(), [])
         return client_connection
 
 class UIRegistration(Registration):
