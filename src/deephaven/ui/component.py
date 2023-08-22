@@ -20,6 +20,7 @@ class RenderContext:
         Note that we're just re-rendering the whole tree on change.
         TODO: We should be able to do better than this, and only re-render the parts that have actually changed.
         """
+        # print("MJB _notify_change")
         self._on_change()
 
     def set_on_change(self, on_change):
@@ -79,8 +80,6 @@ class UiSharedInternals:
 
     @property
     def current_context(self) -> RenderContext:
-        if self._current_context is None:
-            raise Exception("No current context set. This should only be called when rendering a component.")
         return self._current_context
 
 
@@ -105,7 +104,7 @@ class ComponentNode:
         self._type = component_type
         self._render = render
 
-    def __call__(self, context: RenderContext, render_deep=True):
+    def render(self, context: RenderContext, render_deep=True):
         """
         Render the component.
         :param context: The context to render the component in.
@@ -114,10 +113,11 @@ class ComponentNode:
         """
         def render_child(child, child_context):
             if isinstance(child, ComponentNode):
-                return child(child_context, render_deep)
+                return child.render(child_context, render_deep)
             else:
                 return child
 
+        # print("MJB ComponentNode.render")
         result = self._render(context)
         if render_deep:
             # Array of children returned, render them all
@@ -155,6 +155,7 @@ def component(func):
             :return: The rendered component.
             """
             old_context = _get_context()
+            # print("MJB old context is " + str(old_context) + " and new context is " + str(context))
 
             _set_context(context)
             context.start_render()
@@ -162,6 +163,7 @@ def component(func):
             result = func(*args, **kwargs)
 
             context.finish_render()
+            # print("Resetting to old context" + str(old_context))
             _set_context(old_context)
             return result
 
@@ -180,6 +182,7 @@ def use_state(initial_value):
 
     def set_value(new_value):
         # Set the value in the context state and trigger a rerender
+        # print("MJB use_state set_value called with " + str(new_value))
         context.set_state(hook_index, new_value)
 
     return value, set_value

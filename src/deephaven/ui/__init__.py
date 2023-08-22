@@ -7,7 +7,7 @@ import json
 import io
 from .component import *
 
-NAME_COMPONENT_NODE = "deephaven.ui.ComponentNode"
+NAME_COMPONENT_NODE = "deephaven.ui.component.ComponentNode"
 NAME_TEXT_INPUT = "deephaven.ui.TextInput"
 
 __version__ = '0.0.1.dev0'
@@ -15,23 +15,32 @@ __version__ = '0.0.1.dev0'
 
 class ComponentNodeMessageStream(MessageStream):
     def __init__(self, node: ComponentNode, connection: MessageStream):
+        # print("ComponentNodeMessageStream __init__")
         self._node = node
         self._connection = connection
 
     def start(self) -> None:
+        # print("ComponentNodeMessageStream start")
         context = RenderContext()
 
         def handle_change():
-            result = self._node(context)
+            # print("MJB ComponentNodeMessageStream handle_change")
+            result = self._node.render(context)
             self.send_result(result)
 
-        context.on_change = handle_change
-        result = self._node(context)
+        context.set_on_change(handle_change)
+        result = self._node.render(context)
         self.send_result(result)
 
     def send_result(self, result) -> None:
-        payload = json.dumps({'result': result}).encode()
-        self._connection.on_data(payload, self.objects)
+        # print("MJB send_result result = ", str(result))
+
+        # payload = json.dumps({'result': result}).encode()
+        # print("MJB send_result payload = ", payload)
+        # self._connection.on_data(payload, [])
+
+        self._connection.on_data('updated'.encode(), result)
+        # print("MJB send_result completed")
 
     def on_close(self) -> None:
         pass
@@ -106,5 +115,6 @@ class TextInputType(BidirectionalObjectType):
 class UIRegistration(Registration):
     @classmethod
     def register_into(cls, callback: Callback) -> None:
+        # print("MJB registering ComponentNodeType")
         callback.register(ComponentNodeType)
         callback.register(TextInputType)
